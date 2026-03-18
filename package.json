@@ -1,0 +1,45 @@
+{
+  "name": "thronos-gateway",
+  "version": "1.0.0",
+  "description": "Thronos Ecosystem Payment Gateway — Stripe, Fiat, Crosschain RPC payments & service orchestration",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "nodemon src/index.js",
+    "worker": "node src/workers/paymentWorker.js",
+    "migrate": "node src/utils/migrate.js",
+    "test": "jest --coverage",
+    "lint": "eslint src/"
+  },
+  "dependencies": {
+    "express": "^4.21.0",
+    "stripe": "^14.18.0",
+    "ethers": "^6.11.0",
+    "helmet": "^7.1.0",
+    "cors": "^2.8.5",
+    "express-rate-limit": "^7.1.5",
+    "bull": "^4.12.0",
+    "ioredis": "^5.3.2",
+    "sequelize": "^6.37.0",
+    "pg": "^8.11.3",
+    "pg-hstore": "^2.3.4",
+    "jsonwebtoken": "^9.0.2",
+    "uuid": "^9.0.0",
+    "winston": "^3.11.0",
+    "axios": "^1.7.2",
+    "crypto-js": "^4.2.0",
+    "dotenv": "^16.4.5",
+    "csurf": "^1.11.0",
+    "express-validator": "^7.0.1",
+    "ws": "^8.16.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.0",
+    "jest": "^29.7.0",
+    "supertest": "^6.3.3",
+    "eslint": "^8.56.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
