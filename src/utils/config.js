@@ -17,7 +17,9 @@ const REQUIRED_PAYMENT_ENV = [
 function validateEnv() {
   const missing = REQUIRED_ENV.filter(k => !process.env[k]);
   if (missing.length > 0) {
-    throw new Error(`Missing required env vars: ${missing.join(', ')}`);
+    console.error(`[FATAL] Missing required env vars: ${missing.join(', ')}`);
+    console.error('[FATAL] Set these in Railway Variables tab before deploying.');
+    process.exit(1);
   }
   const missingPayment = REQUIRED_PAYMENT_ENV.filter(k => !process.env[k]);
   if (missingPayment.length > 0) {
