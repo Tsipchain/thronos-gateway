@@ -24,6 +24,12 @@ async function start() {
     let result;
     if (chain === 'btc') {
       result = await chainService.verifyBtcPayment({ txHash, expectedTo, expectedAmount });
+    } else if (chain === 'solana') {
+      result = await chainService.verifySolanaPayment({
+        txSignature: txHash,
+        expectedTo,
+        expectedAmountUsdc: expectedAmount,
+      });
     } else {
       result = await chainService.verifyEvmPayment({ chain, txHash, expectedTo, expectedAmount, tokenSymbol });
     }

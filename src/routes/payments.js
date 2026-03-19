@@ -132,7 +132,7 @@ router.post('/crypto/submit',
       'verifyid_kyc', 'driver_ride', 'career_credits', 'thr_purchase', 'custom',
     ]),
     body('serviceRef').optional().isString().trim(),
-    body('chain').isIn(['eth', 'bsc', 'polygon', 'arbitrum', 'btc', 'thr']),
+    body('chain').isIn(['eth', 'bsc', 'polygon', 'arbitrum', 'base', 'btc', 'thr', 'solana']),
     body('txHash').isString().trim().notEmpty(),
     body('fromAddress').isString().trim().notEmpty(),
     body('amountCrypto').isNumeric(),
@@ -159,7 +159,7 @@ router.post('/crypto/submit',
         walletAddress: fromAddress,
         serviceType,
         serviceRef,
-        method: chain === 'btc' ? 'crypto_btc' : chain === 'thr' ? 'crypto_thr' : 'crypto_evm',
+        method: chain === 'btc' ? 'crypto_btc' : chain === 'thr' ? 'crypto_thr' : chain === 'solana' ? 'crypto_solana' : 'crypto_evm',
         chain,
         amountCrypto,
         cryptoSymbol,
@@ -268,6 +268,127 @@ router.post('/:paymentId/refund',
       res.json({ status: 'refunded', refundId: refund.id });
     } catch (err) {
       logger.error('Refund failed', { error: err.message });
+      res.status(500).json({ error: err.message });
+    }
+  }
+);
+
+// ─── Cross-Chain Payment Registration (from Builder/Services) ─────────────
+// This endpoint receives cross-chain payment proofs and triggers fee processing
+const { processCrossChainFee } = require('../services/crossChainFeeHandler');
+
+router.post('/crosschain/register',
+  [
+    body('tx_hash').isString().trim().notEmpty(),
+    body('chain').isIn(['ethereum', 'arbitrum', 'bsc', 'base', 'solana']),
+    body('payer').isString().trim().notEmpty(),
+    body('amount_thr_equivalent').isNumeric(),
+    body('service_type').isIn([
+      'builder_build', 'sentinel_subscription', 'commerce_order',
+      'verifyid_kyc', 'custom',
+    ]),
+    body('fee_action').optional().isIn(['standard', 'stake_and_mint']),
+  ],
+  handleValidation,
+  async (req, res) => {
+    try {
+      const {
+        tx_hash, chain, payer, amount_thr_equivalent,
+        service_type, fee_action,
+      } = req.body;
+
+      // Check duplicate
+      const existing = await Payment.findOne({ where: { txHash: tx_hash } });
+      if (existing) {
+        return res.status(409).json({ error: 'Transaction already registered', paymentId: existing.id });
+      }
+
+      // Normalize chain name for gateway
+      const chainMap = {
+        ethereum: 'eth', arbitrum: 'arbitrum', bsc: 'bsc',
+        base: 'base', solana: 'solana',
+      };
+
+      const payment = await Payment.create({
+        walletAddress: payer,
+        serviceType: service_type,
+        method: chain === 'solana' ? 'crypto_solana' : 'crypto_evm',
+        chain: chainMap[chain] || chain,
+        amountCrypto: amount_thr_equivalent,
+        cryptoSymbol: chain === 'solana' ? 'USDC' : (chain === 'bsc' ? 'BNB' : 'ETH'),
+        txHash: tx_hash,
+        status: 'confirming',
+        metadata: { fee_action, original_chain: chain },
+      });
+
+      // Queue for async verification
+      await paymentQueue.add('verify-crypto', {
+        paymentId: payment.id,
+        chain: chainMap[chain] || chain,
+        txHash: tx_hash,
+        expectedTo: config.treasury[chain] || config.treasury.eth,
+        expectedAmount: amount_thr_equivalent,
+        tokenSymbol: chain === 'solana' ? 'USDC' : null,
+      });
+
+      // If fee_action is stake_and_mint, process cross-chain fee
+      if (fee_action === 'stake_and_mint') {
+        // Process asynchronously (don't block response)
+        processCrossChainFee({
+          sourceChain: chain,
+          amountThrEquivalent: parseFloat(amount_thr_equivalent),
+          payerAddress: payer,
+          txHash: tx_hash,
+          serviceType: service_type,
+        }).catch(err => {
+          logger.error('Async cross-chain fee processing failed', { error: err.message });
+        });
+      }
+
+      res.json({
+        paymentId: payment.id,
+        status: 'confirming',
+        message: 'Cross-chain payment registered',
+        fee_processing: fee_action === 'stake_and_mint' ? 'initiated' : 'standard',
+      });
+    } catch (err) {
+      logger.error('Cross-chain registration failed', { error: err.message });
+      res.status(500).json({ error: err.message });
+    }
+  }
+);
+
+// ─── Solana Payment Preparation ──────────────────────────────────────────────
+// Returns payment details for Phantom to sign
+router.post('/solana/prepare',
+  [
+    body('payer').isString().trim().notEmpty(),
+    body('amount_usdc').isNumeric(),
+    body('service_type').isString().trim().notEmpty(),
+  ],
+  handleValidation,
+  async (req, res) => {
+    try {
+      const { payer, amount_usdc, service_type } = req.body;
+      const treasury = config.treasury.solana;
+
+      if (!treasury) {
+        return res.status(503).json({ error: 'Solana treasury not configured' });
+      }
+
+      const paymentId = crypto.randomUUID();
+
+      res.json({
+        payment_id: paymentId,
+        treasury_address: treasury,
+        usdc_mint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+        amount_usdc: parseFloat(amount_usdc) / 1e6, // convert to USDC (6 decimals)
+        amount_lamports: parseInt(amount_usdc),
+        service_type,
+        message: 'Sign and submit the USDC transfer, then register via /crosschain/register',
+      });
+    } catch (err) {
+      logger.error('Solana prepare failed', { error: err.message });
       res.status(500).json({ error: err.message });
     }
   }

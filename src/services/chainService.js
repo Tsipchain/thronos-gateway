@@ -200,9 +200,67 @@ async function getWalletBalance(address) {
   }
 }
 
+/**
+ * Verify a Solana USDC payment via RPC.
+ */
+async function verifySolanaPayment({ txSignature, expectedTo, expectedAmountUsdc }) {
+  try {
+    const rpcUrl = config.rpc.solana;
+    const { data } = await axios.post(rpcUrl, {
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'getTransaction',
+      params: [txSignature, { encoding: 'jsonParsed', maxSupportedTransactionVersion: 0 }],
+    }, { timeout: 15000 });
+
+    const tx = data.result;
+    if (!tx) return { verified: false, reason: 'Transaction not found' };
+    if (tx.meta?.err) return { verified: false, reason: 'Transaction failed' };
+
+    // Check for USDC SPL token transfer in inner instructions
+    const USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+    const expectedLamports = Math.round(expectedAmountUsdc * 1e6); // USDC 6 decimals
+
+    const allInstructions = [
+      ...(tx.transaction?.message?.instructions || []),
+      ...(tx.meta?.innerInstructions?.flatMap(i => i.instructions) || []),
+    ];
+
+    for (const ix of allInstructions) {
+      const parsed = ix.parsed;
+      if (!parsed) continue;
+
+      if (parsed.type === 'transferChecked' || parsed.type === 'transfer') {
+        const info = parsed.info;
+        const mint = info.mint || null;
+        const amount = parseInt(info.amount || info.tokenAmount?.amount || '0');
+
+        if (mint === USDC_MINT || !mint) {
+          if (amount >= expectedLamports) {
+            return {
+              verified: true,
+              confirmations: 'finalized',
+              from: info.source || info.authority,
+              to: info.destination,
+              value: (amount / 1e6).toFixed(2),
+              token: 'USDC',
+            };
+          }
+        }
+      }
+    }
+
+    return { verified: false, reason: 'No matching USDC transfer found' };
+  } catch (err) {
+    logger.error('Solana verification failed', { txSignature, error: err.message });
+    return { verified: false, reason: err.message };
+  }
+}
+
 module.exports = {
   verifyEvmPayment,
   verifyBtcPayment,
+  verifySolanaPayment,
   attestPaymentOnChain,
   getThrPrice,
   getWalletBalance,

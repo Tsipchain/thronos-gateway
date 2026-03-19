@@ -56,6 +56,9 @@ const config = {
     thr: process.env.THR_TREASURY_ADDRESS,
     eth: process.env.ETH_TREASURY_ADDRESS,
     bsc: process.env.BSC_TREASURY_ADDRESS,
+    arbitrum: process.env.ARB_TREASURY_ADDRESS || process.env.ETH_TREASURY_ADDRESS,
+    base: process.env.BASE_TREASURY_ADDRESS || process.env.ETH_TREASURY_ADDRESS,
+    solana: process.env.SOL_TREASURY_ADDRESS,
   },
 
   rpc: {
@@ -63,6 +66,23 @@ const config = {
     bsc: process.env.BSC_RPC_URL || 'https://bsc-dataseed.binance.org',
     polygon: process.env.POLYGON_RPC_URL || 'https://polygon-rpc.com',
     arbitrum: process.env.ARBITRUM_RPC_URL || 'https://arb1.arbitrum.io/rpc',
+    base: process.env.BASE_RPC_URL || 'https://mainnet.base.org',
+    solana: process.env.SOLANA_RPC_URL || 'https://api.mainnet-beta.solana.com',
+  },
+
+  // AI wallet that holds THR to stake when cross-chain fees arrive
+  aiWallet: {
+    thrAddress: process.env.AI_WALLET_THR_ADDRESS,
+    thrAuthSecret: process.env.AI_WALLET_AUTH_SECRET,
+  },
+
+  // Wrapped THR token contracts on external chains
+  wrappedThr: {
+    eth: process.env.WTHR_ETH_CONTRACT,
+    bsc: process.env.WTHR_BSC_CONTRACT,
+    arbitrum: process.env.WTHR_ARB_CONTRACT,
+    base: process.env.WTHR_BASE_CONTRACT,
+    solana: process.env.WTHR_SOL_MINT,
   },
 
   payment: {
