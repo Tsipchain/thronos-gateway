@@ -288,13 +288,14 @@ router.post('/crosschain/register',
       'verifyid_kyc', 'custom',
     ]),
     body('fee_action').optional().isIn(['standard', 'stake_and_mint']),
+    body('token_symbol').optional().isIn(['ETH', 'BNB', 'USDT', 'USDC', 'MATIC']),
   ],
   handleValidation,
   async (req, res) => {
     try {
       const {
         tx_hash, chain, payer, amount_thr_equivalent,
-        service_type, fee_action,
+        service_type, fee_action, token_symbol,
       } = req.body;
 
       // Check duplicate
@@ -309,26 +310,41 @@ router.post('/crosschain/register',
         base: 'base', solana: 'solana',
       };
 
+      // Determine crypto symbol — use token_symbol if provided, otherwise infer
+      let cryptoSymbol;
+      if (token_symbol) {
+        cryptoSymbol = token_symbol;
+      } else if (chain === 'solana') {
+        cryptoSymbol = 'USDC';
+      } else if (chain === 'bsc') {
+        cryptoSymbol = 'BNB';
+      } else {
+        cryptoSymbol = 'ETH';
+      }
+
       const payment = await Payment.create({
         walletAddress: payer,
         serviceType: service_type,
         method: chain === 'solana' ? 'crypto_solana' : 'crypto_evm',
         chain: chainMap[chain] || chain,
         amountCrypto: amount_thr_equivalent,
-        cryptoSymbol: chain === 'solana' ? 'USDC' : (chain === 'bsc' ? 'BNB' : 'ETH'),
+        cryptoSymbol,
         txHash: tx_hash,
         status: 'confirming',
-        metadata: { fee_action, original_chain: chain },
+        metadata: { fee_action, original_chain: chain, token_symbol: cryptoSymbol },
       });
 
       // Queue for async verification
+      // For USDT/USDC payments, pass the token symbol so verifyEvmPayment
+      // checks ERC-20 Transfer events instead of native value
       await paymentQueue.add('verify-crypto', {
         paymentId: payment.id,
         chain: chainMap[chain] || chain,
         txHash: tx_hash,
         expectedTo: config.treasury[chain] || config.treasury.eth,
         expectedAmount: amount_thr_equivalent,
-        tokenSymbol: chain === 'solana' ? 'USDC' : null,
+        tokenSymbol: (cryptoSymbol === 'USDT' || cryptoSymbol === 'USDC' || chain === 'solana')
+          ? cryptoSymbol : null,
       });
 
       // If fee_action is stake_and_mint, process cross-chain fee
