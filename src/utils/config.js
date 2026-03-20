@@ -1,6 +1,7 @@
 'use strict';
 
 require('dotenv').config();
+const axios = require('axios');
 
 const REQUIRED_ENV = [
   'DATABASE_URL',
@@ -47,8 +48,13 @@ const config = {
     enabled: !!(process.env.STRIPE_SECRET_KEY && process.env.STRIPE_WEBHOOK_SECRET),
   },
 
+  node2: {
+    url: process.env.NODE2_URL || process.env.REPLICA_EXTERNAL_URL,
+    internalKey: process.env.NODE2_INTERNAL_KEY,
+  },
+
   thronos: {
-    coreUrl: process.env.THRONOS_CORE_URL || 'https://api.thronoschain.org',
+    coreUrl: process.env.THRONOS_CORE_URL || process.env.NODE2_URL || process.env.REPLICA_EXTERNAL_URL || 'https://api.thronoschain.org',
     internalKey: process.env.THRONOS_INTERNAL_KEY,
   },
 
@@ -72,7 +78,7 @@ const config = {
 
   // AI wallet that holds THR to stake when cross-chain fees arrive
   aiWallet: {
-    thrAddress: process.env.AI_WALLET_THR_ADDRESS,
+    thrAddress: process.env.AI_WALLET_THR_ADDRESS || process.env.THR_AI_AGENT_WALLET,
     thrAuthSecret: process.env.AI_WALLET_AUTH_SECRET,
   },
 
@@ -111,4 +117,56 @@ const config = {
   },
 };
 
-module.exports = { config, validateEnv };
+/**
+ * Sync config from Node 2 replica (source of truth for RPCs, treasury, keys).
+ * Called once at startup if NODE2_URL is set.
+ */
+async function syncConfigFromNode2() {
+  const node2Url = config.node2.url;
+  if (!node2Url) {
+    console.warn('[config] NODE2_URL not set — skipping Node 2 sync');
+    return;
+  }
+
+  try {
+    const { data } = await axios.get(`${node2Url}/api/config/gateway`, {
+      headers: config.node2.internalKey
+        ? { 'X-Internal-Key': config.node2.internalKey }
+        : {},
+      timeout: 10000,
+    });
+
+    // Merge RPC URLs (Node 2 overrides local)
+    if (data.rpc) {
+      Object.entries(data.rpc).forEach(([chain, url]) => {
+        if (url) config.rpc[chain] = url;
+      });
+    }
+
+    // Merge treasury addresses
+    if (data.treasury) {
+      Object.entries(data.treasury).forEach(([chain, addr]) => {
+        if (addr) config.treasury[chain] = addr;
+      });
+    }
+
+    // AI wallet address
+    if (data.aiWallet) {
+      config.aiWallet.thrAddress = data.aiWallet || config.aiWallet.thrAddress;
+    }
+
+    // Stripe keys (if provided by Node 2)
+    if (data.stripe) {
+      if (data.stripe.secretKey) config.stripe.secretKey = data.stripe.secretKey;
+      if (data.stripe.publishableKey) config.stripe.publishableKey = data.stripe.publishableKey;
+      if (data.stripe.webhookSecret) config.stripe.webhookSecret = data.stripe.webhookSecret;
+      config.stripe.enabled = !!(config.stripe.secretKey && config.stripe.webhookSecret);
+    }
+
+    console.log('[config] Synced config from Node 2 successfully');
+  } catch (err) {
+    console.warn(`[config] Failed to sync from Node 2: ${err.message} — using local env`);
+  }
+}
+
+module.exports = { config, validateEnv, syncConfigFromNode2 };
