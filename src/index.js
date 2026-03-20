@@ -1,6 +1,6 @@
 'use strict';
 
-const { config, validateEnv } = require('./utils/config');
+const { config, validateEnv, syncConfigFromNode2 } = require('./utils/config');
 validateEnv();
 
 const express = require('express');
@@ -76,6 +76,7 @@ app.use((err, _req, res, _next) => {
 
 // ─── Start ──────────────────────────────────────────────────────────────────
 async function start() {
+  await syncConfigFromNode2();
   await initDb();
   app.listen(config.port, () => {
     logger.info(`Thronos Gateway running on port ${config.port}`, {
