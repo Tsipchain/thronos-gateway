@@ -115,6 +115,14 @@ const config = {
     sentinel: process.env.SENTINEL_URL,
     btcAdapter: process.env.BTC_ADAPTER_URL,
   },
+
+  etherfi: {
+    referralUrl: process.env.ETHERFI_REFERRAL_URL || 'https://app.ether.fi/referral',
+    referralCode: process.env.ETHERFI_REFERRAL_CODE || '',
+    webhookSecret: process.env.ETHERFI_WEBHOOK_SECRET || '',
+    partnerApiKey: process.env.ETHERFI_PARTNER_API_KEY || '',
+    partnerApiUrl: process.env.ETHERFI_PARTNER_API_URL || 'https://api.ether.fi',
+  },
 };
 
 /**

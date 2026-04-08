@@ -13,6 +13,7 @@ const { initDb } = require('./models');
 const paymentRoutes = require('./routes/payments');
 const webhookRoutes = require('./routes/webhooks');
 const serviceRoutes = require('./routes/services');
+const payRoutes = require('./routes/pay');
 
 const app = express();
 
@@ -25,6 +26,7 @@ app.use(cors({
     'https://builder.thronoschain.org',
     'https://verifyid.thronoschain.org',
     'https://sentinel.thronoschain.org',
+    'https://gateway.thronoschain.org',
     /\.thronoschain\.org$/,
   ],
   credentials: true,
@@ -67,6 +69,7 @@ app.get('/health', (_req, res) => {
 app.use('/api/payments', paymentRoutes);
 app.use('/webhooks', webhookRoutes);
 app.use('/api/services', serviceRoutes);
+app.use('/api/pay', payRoutes);
 
 // ─── Error handler ──────────────────────────────────────────────────────────
 app.use((err, _req, res, _next) => {

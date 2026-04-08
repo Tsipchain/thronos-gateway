@@ -27,6 +27,10 @@ const Payment = sequelize.define('Payment', {
       'driver_ride',
       'career_credits',
       'thr_purchase',
+      'pay_deposit',
+      'pay_withdraw',
+      'card_topup',
+      'onchain_service',
       'custom'
     ),
     allowNull: false,
@@ -116,6 +120,49 @@ const PriceFeed = sequelize.define('PriceFeed', {
   timestamps: false,
 });
 
+// ─── ThrPay Virtual Wallet ──────────────────────────────────────────────────
+const ThrPayWallet = sequelize.define('ThrPayWallet', {
+  id: { type: DataTypes.UUID, defaultValue: DataTypes.UUIDV4, primaryKey: true },
+  userId: { type: DataTypes.STRING, allowNull: true },
+  walletAddress: { type: DataTypes.STRING, allowNull: true, unique: true },
+  balanceThr: { type: DataTypes.DECIMAL(36, 18), defaultValue: 0 },
+  balanceEth: { type: DataTypes.DECIMAL(36, 18), defaultValue: 0 },
+  balanceUsdc: { type: DataTypes.DECIMAL(18, 6), defaultValue: 0 },
+  status: { type: DataTypes.ENUM('active', 'frozen', 'closed'), defaultValue: 'active' },
+  metadata: { type: DataTypes.JSONB, defaultValue: {} },
+}, {
+  tableName: 'thr_pay_wallets',
+  indexes: [
+    { fields: ['userId'] },
+    { fields: ['walletAddress'] },
+    { fields: ['status'] },
+  ],
+});
+
+// ─── Pay Card ───────────────────────────────────────────────────────────────
+const PayCard = sequelize.define('PayCard', {
+  id: { type: DataTypes.UUID, defaultValue: DataTypes.UUIDV4, primaryKey: true },
+  userId: { type: DataTypes.STRING, allowNull: true },
+  walletAddress: { type: DataTypes.STRING, allowNull: true },
+  provider: { type: DataTypes.STRING, defaultValue: 'etherfi', comment: 'etherfi | stripe_issuing | thronos_native' },
+  status: {
+    type: DataTypes.ENUM('applied', 'pending_kyc', 'approved', 'active', 'frozen', 'rejected', 'cancelled'),
+    defaultValue: 'applied',
+  },
+  trackingId: { type: DataTypes.STRING, allowNull: true, unique: true },
+  cardLast4: { type: DataTypes.STRING(4), allowNull: true },
+  source: { type: DataTypes.STRING, allowNull: true },
+  metadata: { type: DataTypes.JSONB, defaultValue: {} },
+}, {
+  tableName: 'pay_cards',
+  indexes: [
+    { fields: ['userId'] },
+    { fields: ['walletAddress'] },
+    { fields: ['trackingId'] },
+    { fields: ['status'] },
+  ],
+});
+
 // Relations
 Payment.hasMany(WebhookLog, { foreignKey: 'paymentId' });
 WebhookLog.belongsTo(Payment, { foreignKey: 'paymentId' });
@@ -127,4 +174,4 @@ async function initDb() {
   logger.info('Database synced');
 }
 
-module.exports = { sequelize, Payment, Service, WebhookLog, PriceFeed, initDb };
+module.exports = { sequelize, Payment, Service, WebhookLog, PriceFeed, ThrPayWallet, PayCard, initDb };
