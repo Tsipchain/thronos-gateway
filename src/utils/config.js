@@ -3,28 +3,26 @@
 require('dotenv').config();
 const axios = require('axios');
 
+// SECURITY: Crash on missing critical secrets — Phase 0 hardening
 const REQUIRED_ENV = [
   'DATABASE_URL',
   'REDIS_URL',
   'GATEWAY_SECRET',
   'JWT_SECRET',
-];
-
-const REQUIRED_PAYMENT_ENV = [
   'STRIPE_SECRET_KEY',
-  'STRIPE_WEBHOOK_SECRET',
 ];
 
 function validateEnv() {
-  const missing = REQUIRED_ENV.filter(k => !process.env[k]);
+  const missing = REQUIRED_ENV.filter(k => !process.env[k] || !process.env[k].trim());
   if (missing.length > 0) {
-    console.error(`[FATAL] Missing required env vars: ${missing.join(', ')}`);
+    console.error(`[FATAL] Missing or empty required env vars: ${missing.join(', ')}`);
     console.error('[FATAL] Set these in Railway Variables tab before deploying.');
     process.exit(1);
   }
-  const missingPayment = REQUIRED_PAYMENT_ENV.filter(k => !process.env[k]);
-  if (missingPayment.length > 0) {
-    console.warn(`[WARN] Missing payment env vars (Stripe disabled): ${missingPayment.join(', ')}`);
+
+  // Non-fatal warnings for optional payment config
+  if (!process.env.STRIPE_WEBHOOK_SECRET || !process.env.STRIPE_WEBHOOK_SECRET.trim()) {
+    console.warn('[WARN] Missing STRIPE_WEBHOOK_SECRET — Stripe webhooks will not verify signatures');
   }
 }
 
