@@ -19,16 +19,19 @@ const app = express();
 
 // ─── Security ───────────────────────────────────────────────────────────────
 app.use(helmet());
+// SECURITY: CORS restricted to explicit origins — Phase 0 hardening
+const allowedOrigins = [
+  'https://thronoschain.org',
+  'https://commerce.thronoschain.org',
+  'https://explorer.thronoschain.org',
+  'https://api.thronoschain.org',
+  'https://careerforge-ai.thronoschain.org',
+  'https://builder.thronoschain.org',
+  'https://sentinel.thronoschain.org',
+  'https://verifyid.thronoschain.org',
+];
 app.use(cors({
-  origin: [
-    'https://api.thronoschain.org',
-    'https://commerce.thronoschain.org',
-    'https://builder.thronoschain.org',
-    'https://verifyid.thronoschain.org',
-    'https://sentinel.thronoschain.org',
-    'https://gateway.thronoschain.org',
-    /\.thronoschain\.org$/,
-  ],
+  origin: allowedOrigins,
   credentials: true,
 }));
 

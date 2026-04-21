@@ -277,7 +277,9 @@ router.post('/:paymentId/refund',
 // This endpoint receives cross-chain payment proofs and triggers fee processing
 const { processCrossChainFee } = require('../services/crossChainFeeHandler');
 
+// SECURITY: Auth added — Phase 0 hardening
 router.post('/crosschain/register',
+  requireAuthOrInternal,
   [
     body('tx_hash').isString().trim().notEmpty(),
     body('chain').isIn(['ethereum', 'arbitrum', 'bsc', 'base', 'solana']),
