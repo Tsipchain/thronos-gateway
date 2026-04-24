@@ -17,7 +17,7 @@ router.get('/wallet',
   requireAuthOrInternal,
   async (req, res) => {
     try {
-      const userId = req.user?.sub || req.query.userId;
+      const userId = req.user?.sub || (req.isInternalService ? req.query.userId : null);
       const walletAddress = req.query.walletAddress || null;
 
       if (!userId && !walletAddress) {
@@ -47,7 +47,7 @@ router.get('/history',
   handleValidation,
   async (req, res) => {
     try {
-      const userId = req.user?.sub || req.query.userId;
+      const userId = req.user?.sub || (req.isInternalService ? req.query.userId : null);
       const { walletAddress, limit = 20, offset = 0 } = req.query;
       const { Payment } = require('../models');
 
@@ -82,7 +82,7 @@ router.get('/card/status',
   requireAuthOrInternal,
   async (req, res) => {
     try {
-      const userId = req.user?.sub || req.query.userId;
+      const userId = req.user?.sub || (req.isInternalService ? req.query.userId : null);
       const walletAddress = req.query.walletAddress || null;
 
       const card = await payService.getCardStatus(userId, walletAddress);
@@ -121,7 +121,7 @@ router.post('/card/apply',
   handleValidation,
   async (req, res) => {
     try {
-      const userId = req.user?.sub || req.body.userId;
+      const userId = req.user?.sub || (req.isInternalService ? req.body.userId : null);
       const { walletAddress, source = 'app' } = req.body;
 
       if (!userId && !walletAddress) {

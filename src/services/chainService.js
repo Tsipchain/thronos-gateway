@@ -4,6 +4,7 @@ const { ethers } = require('ethers');
 const axios = require('axios');
 const { config } = require('../utils/config');
 const logger = require('../utils/logger');
+const logger = require('../utils/logger');
 
 // ERC-20 ABI subset for token transfers
 const ERC20_ABI = [
@@ -179,8 +180,9 @@ async function getThrPrice() {
   try {
     const { data } = await axios.get(`${config.thronos.coreUrl}/api/price/thr`, { timeout: 5000 });
     return data.priceUsd || 0.03;
-  } catch (_) {
-    return 0.03; // fallback
+  } catch (err) {
+    logger.warn('THR price fetch failed, using fallback $0.03', { error: err.message });
+    return 0.03;
   }
 }
 

@@ -109,7 +109,7 @@ async function healthCheckAll() {
         status: 'down',
         lastCheck: new Date(),
         lastLatencyMs: latencyMs,
-      }).catch(() => {});
+      }).catch((dbErr) => { logger.warn('Service upsert failed', { name: svc.name, error: dbErr.message }); });
     }
   }));
 

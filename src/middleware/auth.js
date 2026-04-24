@@ -61,7 +61,7 @@ function requireAuthOrInternal(req, res, next) {
     try {
       req.user = jwt.verify(authHeader.slice(7), config.jwt.secret);
       return next();
-    } catch (_) { /* fall through */ }
+    } catch (_) { /* JWT invalid — fall through to 401 */ }
   }
 
   return res.status(401).json({ error: 'Authentication required' });

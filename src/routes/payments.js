@@ -33,7 +33,7 @@ router.post('/fiat/checkout',
   async (req, res) => {
     try {
       const { serviceType, serviceRef, plan, amountCents, walletAddress, successUrl, cancelUrl } = req.body;
-      const userId = req.user?.sub || req.body.userId || null;
+      const userId = req.user?.sub || (req.isInternalService ? req.body.userId : null);
 
       const payment = await Payment.create({
         userId,
@@ -87,7 +87,7 @@ router.post('/fiat/subscribe',
   async (req, res) => {
     try {
       const { serviceType, plan, walletAddress, successUrl, cancelUrl } = req.body;
-      const userId = req.user?.sub || req.body.userId || null;
+      const userId = req.user?.sub || (req.isInternalService ? req.body.userId : null);
 
       const payment = await Payment.create({
         userId,
@@ -146,7 +146,7 @@ router.post('/crypto/submit',
         serviceType, serviceRef, chain, txHash,
         fromAddress, amountCrypto, cryptoSymbol, plan,
       } = req.body;
-      const userId = req.user?.sub || req.body.userId || null;
+      const userId = req.user?.sub || (req.isInternalService ? req.body.userId : null);
 
       // Check for duplicate txHash
       const existing = await Payment.findOne({ where: { txHash } });
@@ -379,10 +379,14 @@ router.post('/crosschain/register',
 // ─── Solana Payment Preparation ──────────────────────────────────────────────
 // Returns payment details for Phantom to sign
 router.post('/solana/prepare',
+  requireAuthOrInternal,
   [
     body('payer').isString().trim().notEmpty(),
     body('amount_usdc').isNumeric(),
-    body('service_type').isString().trim().notEmpty(),
+    body('service_type').isIn([
+      'builder_build', 'sentinel_subscription', 'commerce_order',
+      'verifyid_kyc', 'custom',
+    ]),
   ],
   handleValidation,
   async (req, res) => {

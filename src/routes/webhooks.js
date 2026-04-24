@@ -56,12 +56,11 @@ router.post('/stripe', async (req, res) => {
           completedAt: new Date(),
         });
 
-        // Apply fee split
-        const feeTotal = amountCents * 0.029 + 30; // Stripe fee estimate
-        const netAmount = amountCents - feeTotal;
-        const feeTreasury = (netAmount * config.feeSplit.treasury) / 100;
-        const feeBurn = (netAmount * config.feeSplit.burn) / 100;
-        const feeLp = (netAmount * config.feeSplit.lp) / 100;
+        // Apply fee split on gross amount (consistent with crossChainFeeHandler)
+        const amountUsd = amountCents / 100;
+        const feeTreasury = amountUsd * (config.feeSplit.treasury / 100);
+        const feeBurn = amountUsd * (config.feeSplit.burn / 100);
+        const feeLp = amountUsd * (config.feeSplit.lp / 100);
 
         await payment.update({ feeTreasury, feeBurn, feeLp });
 

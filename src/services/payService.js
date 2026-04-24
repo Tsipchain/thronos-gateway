@@ -80,7 +80,7 @@ async function getWalletBalances(walletId) {
     });
     if (res.data?.THR) prices.THR = parseFloat(res.data.THR);
     if (res.data?.ETH) prices.ETH = parseFloat(res.data.ETH);
-  } catch { /* use defaults */ }
+  } catch (err) { logger.warn('Price feed unavailable, using defaults', { error: err.message }); }
 
   const thr = parseFloat(wallet.balanceThr) || 0;
   const eth = parseFloat(wallet.balanceEth) || 0;

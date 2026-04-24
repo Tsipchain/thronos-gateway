@@ -68,11 +68,20 @@ app.get('/health', (_req, res) => {
   res.json({ status: 'healthy', service: 'thronos-gateway', timestamp: new Date().toISOString() });
 });
 
+// ─── Stricter rate limits for payment endpoints ────────────────────────────
+const paymentLimiter = rateLimit({
+  windowMs: 60000,
+  max: 15,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many payment requests — try again shortly' },
+});
+
 // ─── Routes ─────────────────────────────────────────────────────────────────
-app.use('/api/payments', paymentRoutes);
+app.use('/api/payments', paymentLimiter, paymentRoutes);
 app.use('/webhooks', webhookRoutes);
 app.use('/api/services', serviceRoutes);
-app.use('/api/pay', payRoutes);
+app.use('/api/pay', paymentLimiter, payRoutes);
 
 // ─── Error handler ──────────────────────────────────────────────────────────
 app.use((err, _req, res, _next) => {
