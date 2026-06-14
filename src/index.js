@@ -14,11 +14,12 @@ const paymentRoutes = require('./routes/payments');
 const webhookRoutes = require('./routes/webhooks');
 const serviceRoutes = require('./routes/services');
 const payRoutes = require('./routes/pay');
+const downloadsRoutes = require('./routes/downloads');
 
 const app = express();
 
 // ─── Security ───────────────────────────────────────────────────────────────
-app.use(helmet());
+app.use(helmet({ contentSecurityPolicy: false }));
 // SECURITY: CORS restricted to explicit origins — Phase 0 hardening
 const allowedOrigins = [
   'https://thronoschain.org',
@@ -73,6 +74,8 @@ app.use('/api/payments', paymentRoutes);
 app.use('/webhooks', webhookRoutes);
 app.use('/api/services', serviceRoutes);
 app.use('/api/pay', payRoutes);
+// Public downloads page — no auth required, open CORS for direct browser access
+app.use('/downloads', cors({ origin: '*' }), downloadsRoutes);
 
 // ─── Error handler ──────────────────────────────────────────────────────────
 app.use((err, _req, res, _next) => {
