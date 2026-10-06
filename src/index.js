@@ -14,6 +14,7 @@ const paymentRoutes = require('./routes/payments');
 const webhookRoutes = require('./routes/webhooks');
 const serviceRoutes = require('./routes/services');
 const payRoutes = require('./routes/pay');
+const basketballRoutes = require('./routes/basketball');
 
 const app = express();
 
@@ -29,6 +30,7 @@ const allowedOrigins = [
   'https://builder.thronoschain.org',
   'https://sentinel.thronoschain.org',
   'https://verifyid.thronoschain.org',
+  'https://basketball-market-web-production.up.railway.app',
 ];
 app.use(cors({
   origin: allowedOrigins,
@@ -73,6 +75,7 @@ app.use('/api/payments', paymentRoutes);
 app.use('/webhooks', webhookRoutes);
 app.use('/api/services', serviceRoutes);
 app.use('/api/pay', payRoutes);
+app.use('/api/basketball', basketballRoutes);
 
 // ─── Error handler ──────────────────────────────────────────────────────────
 app.use((err, _req, res, _next) => {
