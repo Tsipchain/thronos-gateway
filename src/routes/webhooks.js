@@ -4,11 +4,22 @@ const express = require('express');
 const { Payment, WebhookLog } = require('../models');
 const stripeService = require('../services/stripeService');
 const { notifyServicePaymentComplete } = require('../services/orchestrator');
+const {
+  isBasketballSubscriptionPayment,
+  notifyBasketballPaymentComplete,
+} = require('../services/basketballService');
 const { attestPaymentOnChain } = require('../services/chainService');
 const { config } = require('../utils/config');
 const logger = require('../utils/logger');
 
 const router = express.Router();
+
+async function notifyCompletedPayment(payment) {
+  if (isBasketballSubscriptionPayment(payment)) {
+    return notifyBasketballPaymentComplete(payment);
+  }
+  return notifyServicePaymentComplete(payment);
+}
 
 // ─── Stripe Webhook ─────────────────────────────────────────────────────────
 // NOTE: This route must receive raw body (configured in index.js)
@@ -24,7 +35,6 @@ router.post('/stripe', async (req, res) => {
     return res.status(400).json({ error: `Webhook Error: ${err.message}` });
   }
 
-  // Log the webhook
   const webhookLog = await WebhookLog.create({
     source: 'stripe',
     eventType: event.type,
@@ -52,23 +62,19 @@ router.post('/stripe', async (req, res) => {
         await payment.update({
           status: 'completed',
           amountFiat: amountCents / 100,
+          currency: (session.currency || payment.currency || 'USD').toUpperCase(),
           externalId: session.payment_intent || session.id,
           completedAt: new Date(),
         });
 
-        // Apply fee split
-        const feeTotal = amountCents * 0.029 + 30; // Stripe fee estimate
+        const feeTotal = amountCents * 0.029 + 30;
         const netAmount = amountCents - feeTotal;
         const feeTreasury = (netAmount * config.feeSplit.treasury) / 100;
         const feeBurn = (netAmount * config.feeSplit.burn) / 100;
         const feeLp = (netAmount * config.feeSplit.lp) / 100;
 
         await payment.update({ feeTreasury, feeBurn, feeLp });
-
-        // Notify downstream service
-        await notifyServicePaymentComplete(payment);
-
-        // Attest on-chain
+        await notifyCompletedPayment(payment);
         await attestPaymentOnChain(payment);
 
         logger.info('Stripe payment completed', {
@@ -80,7 +86,6 @@ router.post('/stripe', async (req, res) => {
       }
 
       case 'invoice.payment_succeeded': {
-        // Handle subscription renewals
         const invoice = event.data.object;
         const subMeta = invoice.subscription_details?.metadata || {};
         const paymentId = subMeta.gatewayPaymentId;
@@ -90,9 +95,10 @@ router.post('/stripe', async (req, res) => {
             await payment.update({
               status: 'completed',
               amountFiat: invoice.amount_paid / 100,
+              currency: (invoice.currency || payment.currency || 'USD').toUpperCase(),
               completedAt: new Date(),
             });
-            await notifyServicePaymentComplete(payment);
+            await notifyCompletedPayment(payment);
           }
         }
         break;
@@ -105,6 +111,9 @@ router.post('/stripe', async (req, res) => {
           const payment = await Payment.findOne({ where: { externalId: pi } });
           if (payment) {
             await payment.update({ status: 'refunded' });
+            if (isBasketballSubscriptionPayment(payment)) {
+              await notifyBasketballPaymentComplete(payment);
+            }
             logger.info('Payment refunded via webhook', { paymentId: payment.id });
           }
         }
