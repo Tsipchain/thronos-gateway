@@ -8,6 +8,9 @@ const { Payment, WebhookLog, initDb } = require('../models');
 const { paymentQueue, healthCheckQueue } = require('../services/queueService');
 const chainService = require('../services/chainService');
 const { notifyServicePaymentComplete } = require('../services/orchestrator');
+const { decideVerification, DEFAULT_MAX_VERIFICATION_AGE_MS } = require('../services/paymentVerification');
+
+const VERIFICATION_RETRY_DELAY_MS = 60 * 1000;
 
 async function start() {
   await initDb();
@@ -20,50 +23,117 @@ async function start() {
 
     const payment = await Payment.findByPk(paymentId);
     if (!payment) throw new Error(`Payment ${paymentId} not found`);
+    if (['completed', 'failed', 'expired', 'refunded'].includes(payment.status)) {
+      logger.info('Skipping verification for terminal payment', { paymentId, status: payment.status });
+      return;
+    }
 
     let result;
-    if (chain === 'btc') {
-      result = await chainService.verifyBtcPayment({ txHash, expectedTo, expectedAmount });
-    } else if (chain === 'solana') {
-      result = await chainService.verifySolanaPayment({
-        txSignature: txHash,
-        expectedTo,
-        expectedAmountUsdc: expectedAmount,
-      });
-    } else {
-      result = await chainService.verifyEvmPayment({ chain, txHash, expectedTo, expectedAmount, tokenSymbol });
+    try {
+      if (chain === 'btc') {
+        result = await chainService.verifyBtcPayment({ txHash, expectedTo, expectedAmount });
+      } else if (chain === 'solana') {
+        result = await chainService.verifySolanaPayment({
+          txSignature: txHash,
+          expectedTo,
+          expectedAmountUsdc: expectedAmount,
+        });
+      } else if (chain === 'thr') {
+        result = {
+          verified: false,
+          reason: 'Native THR transactions must be verified by Thronos Core, not the EVM payment verifier',
+        };
+      } else {
+        result = await chainService.verifyEvmPayment({ chain, txHash, expectedTo, expectedAmount, tokenSymbol });
+      }
+    } catch (err) {
+      const permanentConfigurationError = /No RPC configured|Unknown token|unsupported chain/i.test(err.message || '');
+      result = {
+        verified: false,
+        reason: err.message || 'Payment verification request failed',
+        retryable: !permanentConfigurationError,
+        confirmations: 0,
+      };
     }
 
-    if (result.verified) {
-      // Calculate fee split
-      const thrPrice = await chainService.getThrPrice();
-      const amountUsd = parseFloat(payment.amountCrypto) * thrPrice;
+    const createdAtMs = new Date(payment.createdAt || Date.now()).getTime();
+    const elapsedMs = Number.isFinite(createdAtMs) ? Math.max(0, Date.now() - createdAtMs) : 0;
+    const decision = decideVerification({
+      chain,
+      result,
+      requiredConfirmations: config.payment.confirmationBlocks,
+      elapsedMs,
+      maxVerificationAgeMs: DEFAULT_MAX_VERIFICATION_AGE_MS,
+    });
 
+    if (decision.action === 'retry') {
       await payment.update({
-        status: 'completed',
-        confirmations: result.confirmations,
-        amountFiat: amountUsd,
-        feeTreasury: (parseFloat(payment.amountCrypto) * config.feeSplit.treasury) / 100,
-        feeBurn: (parseFloat(payment.amountCrypto) * config.feeSplit.burn) / 100,
-        feeLp: (parseFloat(payment.amountCrypto) * config.feeSplit.lp) / 100,
-        completedAt: new Date(),
+        status: 'confirming',
+        confirmations: decision.confirmations,
+        metadata: {
+          ...(payment.metadata || {}),
+          lastVerificationReason: decision.reason,
+          lastVerificationAt: new Date().toISOString(),
+        },
       });
 
-      // Notify downstream service
-      await notifyServicePaymentComplete(payment);
+      // Schedule one delayed follow-up instead of exhausting Bull's three fast retries.
+      const minuteSlot = Math.floor(Date.now() / VERIFICATION_RETRY_DELAY_MS);
+      await paymentQueue.add('verify-crypto', job.data, {
+        delay: VERIFICATION_RETRY_DELAY_MS,
+        jobId: `verify-${payment.id}-${minuteSlot}`,
+        attempts: 1,
+        removeOnComplete: true,
+        removeOnFail: 50,
+      });
 
-      // Attest on-chain
-      await chainService.attestPaymentOnChain(payment);
-
-      logger.info('Crypto payment verified and completed', { paymentId, chain });
-    } else if (result.confirmations !== undefined && result.confirmations < config.payment.confirmationBlocks) {
-      // Not enough confirmations yet — re-queue with delay
-      await payment.update({ confirmations: result.confirmations });
-      throw new Error(`Only ${result.confirmations} confirmations, need ${config.payment.confirmationBlocks}`);
-    } else {
-      await payment.update({ status: 'failed', metadata: { ...payment.metadata, failReason: result.reason } });
-      logger.warn('Crypto payment verification failed', { paymentId, reason: result.reason });
+      logger.info('Payment remains confirming; delayed verification scheduled', {
+        paymentId,
+        chain,
+        confirmations: decision.confirmations,
+        retryDelayMs: VERIFICATION_RETRY_DELAY_MS,
+        reason: decision.reason,
+      });
+      return;
     }
+
+    if (decision.action === 'fail') {
+      await payment.update({
+        status: 'failed',
+        confirmations: decision.confirmations,
+        metadata: { ...(payment.metadata || {}), failReason: decision.reason },
+      });
+      logger.warn('Crypto payment verification failed', {
+        paymentId,
+        chain,
+        reason: decision.reason,
+      });
+      return;
+    }
+
+    // Calculate fee split only after the chain-specific finality rule is met.
+    const thrPrice = await chainService.getThrPrice();
+    const amountUsd = parseFloat(payment.amountCrypto) * thrPrice;
+
+    await payment.update({
+      status: 'completed',
+      confirmations: decision.confirmations,
+      amountFiat: amountUsd,
+      feeTreasury: (parseFloat(payment.amountCrypto) * config.feeSplit.treasury) / 100,
+      feeBurn: (parseFloat(payment.amountCrypto) * config.feeSplit.burn) / 100,
+      feeLp: (parseFloat(payment.amountCrypto) * config.feeSplit.lp) / 100,
+      completedAt: new Date(),
+      metadata: { ...(payment.metadata || {}), finalityVerifiedAt: new Date().toISOString() },
+    });
+
+    await notifyServicePaymentComplete(payment);
+    await chainService.attestPaymentOnChain(payment);
+
+    logger.info('Crypto payment verified and completed', {
+      paymentId,
+      chain,
+      confirmations: decision.confirmations,
+    });
   });
 
   // ─── Health Check Worker ────────────────────────────────────────────────
