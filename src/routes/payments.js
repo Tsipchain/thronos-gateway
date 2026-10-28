@@ -148,6 +148,21 @@ router.post('/crypto/submit',
       } = req.body;
       const userId = req.user?.sub || req.body.userId || null;
 
+      // Native THR is verified by Thronos Core; this EVM/BTC/Solana verifier cannot verify it.
+      if (chain === 'thr') {
+        return res.status(503).json({
+          error: 'Native THR payments must use the Thronos Core transaction verifier',
+        });
+      }
+
+      // Never silently fall back to an unrelated chain treasury (e.g. ETH for BTC).
+      const expectedTo = config.treasury[chain];
+      if (!expectedTo) {
+        return res.status(503).json({
+          error: `Treasury address not configured for ${chain}`,
+        });
+      }
+
       // Check for duplicate txHash
       const existing = await Payment.findOne({ where: { txHash } });
       if (existing) {
@@ -173,7 +188,7 @@ router.post('/crypto/submit',
         paymentId: payment.id,
         chain,
         txHash,
-        expectedTo: config.treasury[chain] || config.treasury.eth,
+        expectedTo,
         expectedAmount: amountCrypto,
         tokenSymbol: cryptoSymbol,
       });
