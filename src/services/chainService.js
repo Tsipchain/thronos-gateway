@@ -53,10 +53,10 @@ function getProvider(chain) {
 async function verifyEvmPayment({ chain, txHash, expectedTo, expectedAmount, tokenSymbol }) {
   const provider = getProvider(chain);
   const receipt = await provider.getTransactionReceipt(txHash);
-  if (!receipt) return { verified: false, reason: 'Transaction not found' };
+  if (!receipt) return { verified: false, reason: 'Transaction not found', retryable: true, confirmations: 0 };
   if (receipt.status !== 1) return { verified: false, reason: 'Transaction reverted' };
 
-  const confirmations = await provider.getBlockNumber() - receipt.blockNumber;
+  const confirmations = Math.max(0, (await provider.getBlockNumber()) - receipt.blockNumber + 1);
   if (confirmations < config.payment.confirmationBlocks) {
     return { verified: false, reason: 'Insufficient confirmations', confirmations };
   }
@@ -111,32 +111,63 @@ async function verifyEvmPayment({ chain, txHash, expectedTo, expectedAmount, tok
 }
 
 /**
- * Verify a BTC payment via the BTC adapter service or public API.
+ * Verify a BTC payment and return the actual Bitcoin confirmation count.
+ * Blockstream-compatible adapter endpoints are rooted at /api.
  */
 async function verifyBtcPayment({ txHash, expectedTo, expectedAmount }) {
+  const baseUrl = config.services.btcAdapter
+    ? config.services.btcAdapter.replace(/\/+$/, '')
+    : 'https://blockstream.info/api';
+
   try {
-    const url = config.services.btcAdapter
-      ? `${config.services.btcAdapter}/tx/${txHash}`
-      : `https://blockstream.info/api/tx/${txHash}`;
-    const { data: tx } = await axios.get(url, { timeout: 15000 });
+    const { data: tx } = await axios.get(`${baseUrl}/tx/${txHash}`, { timeout: 15000 });
 
     if (!tx.status || !tx.status.confirmed) {
-      return { verified: false, reason: 'Transaction not confirmed' };
+      return { verified: false, reason: 'Transaction not confirmed', retryable: true, confirmations: 0 };
     }
 
-    const satoshis = Math.round(expectedAmount * 1e8);
+    const blockHeight = Number(tx.status.block_height);
+    if (!Number.isSafeInteger(blockHeight) || blockHeight <= 0) {
+      return {
+        verified: false,
+        reason: 'Unable to determine Bitcoin confirmation count',
+        retryable: true,
+        confirmations: 0,
+      };
+    }
+
+    const { data: tipResponse } = await axios.get(`${baseUrl}/blocks/tip/height`, { timeout: 10000 });
+    const tipHeight = Number(String(tipResponse).trim());
+    if (!Number.isSafeInteger(tipHeight) || tipHeight < blockHeight) {
+      return {
+        verified: false,
+        reason: 'Unable to determine current Bitcoin block height',
+        retryable: true,
+        confirmations: 0,
+      };
+    }
+
+    const confirmations = Math.max(0, tipHeight - blockHeight + 1);
+    const expectedSatoshis = Math.round(Number(expectedAmount) * 1e8);
+    if (!Number.isFinite(expectedSatoshis) || expectedSatoshis <= 0 || !expectedTo) {
+      return { verified: false, reason: 'Invalid expected Bitcoin recipient or amount', confirmations };
+    }
+
     const matchingOutput = (tx.vout || []).find(
-      out => out.scriptpubkey_address === expectedTo && out.value >= satoshis
+      out => out.scriptpubkey_address === expectedTo && Number(out.value) >= expectedSatoshis
     );
 
     return {
-      verified: !!matchingOutput,
-      confirmations: tx.status.block_height ? 'confirmed' : 0,
+      verified: Boolean(matchingOutput),
+      confirmations,
+      from: undefined,
+      to: expectedTo,
+      value: matchingOutput ? Number(matchingOutput.value) / 1e8 : null,
       reason: matchingOutput ? null : 'No matching output found',
     };
   } catch (err) {
     logger.error('BTC verification failed', { txHash, error: err.message });
-    return { verified: false, reason: err.message };
+    return { verified: false, reason: err.message || 'Bitcoin provider request failed', retryable: true, confirmations: 0 };
   }
 }
 
@@ -204,7 +235,8 @@ async function getWalletBalance(address) {
 }
 
 /**
- * Verify a Solana USDC payment via RPC.
+ * Verify a Solana USDC payment from a finalized transaction.
+ * The destination must be a USDC token account owned by the configured treasury.
  */
 async function verifySolanaPayment({ txSignature, expectedTo, expectedAmountUsdc }) {
   try {
@@ -213,50 +245,86 @@ async function verifySolanaPayment({ txSignature, expectedTo, expectedAmountUsdc
       jsonrpc: '2.0',
       id: 1,
       method: 'getTransaction',
-      params: [txSignature, { encoding: 'jsonParsed', maxSupportedTransactionVersion: 0 }],
+      params: [txSignature, {
+        encoding: 'jsonParsed',
+        commitment: 'finalized',
+        maxSupportedTransactionVersion: 0,
+      }],
     }, { timeout: 15000 });
 
     const tx = data.result;
-    if (!tx) return { verified: false, reason: 'Transaction not found' };
-    if (tx.meta?.err) return { verified: false, reason: 'Transaction failed' };
+    if (!tx) {
+      return { verified: false, reason: 'Transaction not found', retryable: true, confirmations: 0 };
+    }
+    if (tx.meta?.err) return { verified: false, reason: 'Transaction failed', confirmations: 1 };
 
-    // Check for USDC SPL token transfer in inner instructions
     const USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
-    const expectedLamports = Math.round(expectedAmountUsdc * 1e6); // USDC 6 decimals
-
-    const allInstructions = [
-      ...(tx.transaction?.message?.instructions || []),
-      ...(tx.meta?.innerInstructions?.flatMap(i => i.instructions) || []),
-    ];
-
-    for (const ix of allInstructions) {
-      const parsed = ix.parsed;
-      if (!parsed) continue;
-
-      if (parsed.type === 'transferChecked' || parsed.type === 'transfer') {
-        const info = parsed.info;
-        const mint = info.mint || null;
-        const amount = parseInt(info.amount || info.tokenAmount?.amount || '0');
-
-        if (mint === USDC_MINT || !mint) {
-          if (amount >= expectedLamports) {
-            return {
-              verified: true,
-              confirmations: 'finalized',
-              from: info.source || info.authority,
-              to: info.destination,
-              value: (amount / 1e6).toFixed(2),
-              token: 'USDC',
-            };
-          }
-        }
-      }
+    const expectedUnits = BigInt(Math.round(Number(expectedAmountUsdc) * 1e6));
+    if (expectedUnits <= 0n || !expectedTo) {
+      return { verified: false, reason: 'Invalid expected Solana recipient or amount', confirmations: 1, finalized: true };
     }
 
-    return { verified: false, reason: 'No matching USDC transfer found' };
+    const accountKeys = tx.transaction?.message?.accountKeys || [];
+    const publicKeyOf = key => typeof key === 'string' ? key : key?.pubkey;
+    const preBalances = tx.meta?.preTokenBalances || [];
+    const postBalances = tx.meta?.postTokenBalances || [];
+    const tokenBalances = [...preBalances, ...postBalances];
+
+    const destinationIsTreasuryUsdc = destination => {
+      const destinationIndex = accountKeys.findIndex(key => publicKeyOf(key) === destination);
+      if (destinationIndex < 0) return false;
+      return tokenBalances.some(balance =>
+        balance.accountIndex === destinationIndex &&
+        balance.mint === USDC_MINT &&
+        balance.owner === expectedTo
+      );
+    };
+
+    const instructions = [
+      ...(tx.transaction?.message?.instructions || []),
+      ...(tx.meta?.innerInstructions?.flatMap(group => group.instructions || []) || []),
+    ];
+
+    for (const instruction of instructions) {
+      const parsed = instruction.parsed;
+      if (!parsed || !['transfer', 'transferChecked'].includes(parsed.type)) continue;
+
+      const info = parsed.info || {};
+      const destination = info.destination;
+      if (!destination || !destinationIsTreasuryUsdc(destination)) continue;
+
+      const destinationBalance = tokenBalances.find(balance =>
+        accountKeys.findIndex(key => publicKeyOf(key) === destination) === balance.accountIndex &&
+        balance.mint === USDC_MINT &&
+        balance.owner === expectedTo
+      );
+      const mint = info.mint || destinationBalance?.mint;
+      if (mint !== USDC_MINT) continue;
+
+      const rawAmount = info.tokenAmount?.amount ?? info.amount;
+      if (!/^\d+$/.test(String(rawAmount ?? ''))) continue;
+      if (BigInt(String(rawAmount)) < expectedUnits) continue;
+
+      return {
+        verified: true,
+        finalized: true,
+        confirmations: 1,
+        from: info.source || info.authority || null,
+        to: expectedTo,
+        value: (Number(BigInt(String(rawAmount))) / 1e6).toFixed(6),
+        token: 'USDC',
+      };
+    }
+
+    return {
+      verified: false,
+      reason: 'No matching finalized USDC transfer to treasury found',
+      confirmations: 1,
+      finalized: true,
+    };
   } catch (err) {
     logger.error('Solana verification failed', { txSignature, error: err.message });
-    return { verified: false, reason: err.message };
+    return { verified: false, reason: err.message || 'Solana RPC request failed', retryable: true, confirmations: 0 };
   }
 }
 

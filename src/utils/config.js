@@ -58,6 +58,7 @@ const config = {
 
   treasury: {
     thr: process.env.THR_TREASURY_ADDRESS,
+    btc: process.env.BTC_TREASURY_ADDRESS,
     eth: process.env.ETH_TREASURY_ADDRESS,
     bsc: process.env.BSC_TREASURY_ADDRESS,
     arbitrum: process.env.ARB_TREASURY_ADDRESS || process.env.ETH_TREASURY_ADDRESS,
