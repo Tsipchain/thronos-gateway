@@ -163,15 +163,41 @@ const PayCard = sequelize.define('PayCard', {
   ],
 });
 
+// ─── Merchant Gateway Models ────────────────────────────────────────────────
+const { defineMerchant } = require('./merchant');
+const { defineCheckout } = require('./checkout');
+const { defineVoucher } = require('./voucher');
+
+const Merchant = defineMerchant(sequelize);
+const Checkout = defineCheckout(sequelize);
+const Voucher = defineVoucher(sequelize);
+
 // Relations
 Payment.hasMany(WebhookLog, { foreignKey: 'paymentId' });
 WebhookLog.belongsTo(Payment, { foreignKey: 'paymentId' });
+
+Merchant.hasMany(Checkout, { foreignKey: 'merchantId' });
+Checkout.belongsTo(Merchant, { foreignKey: 'merchantId' });
+
+Merchant.hasMany(Voucher, { foreignKey: 'merchantId' });
+Voucher.belongsTo(Merchant, { foreignKey: 'merchantId' });
+
+Checkout.hasOne(Voucher, { foreignKey: 'checkoutId' });
+Voucher.belongsTo(Checkout, { foreignKey: 'checkoutId' });
 
 async function initDb() {
   await sequelize.authenticate();
   logger.info('Database connected');
   await sequelize.sync({ alter: config.env !== 'production' });
   logger.info('Database synced');
+
+  // Initialise merchant service with model references
+  const merchantService = require('../services/merchantService');
+  merchantService.init({ Merchant, Checkout, Voucher });
 }
 
-module.exports = { sequelize, Payment, Service, WebhookLog, PriceFeed, ThrPayWallet, PayCard, initDb };
+module.exports = {
+  sequelize, Payment, Service, WebhookLog, PriceFeed, ThrPayWallet, PayCard,
+  Merchant, Checkout, Voucher,
+  initDb,
+};
